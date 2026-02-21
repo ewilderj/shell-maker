@@ -188,7 +188,11 @@ Objective-C -> (\"objective-c\" . \"objc\")"
   "Map each position in PROPERTIZED back to its position in ORIGINAL.
 Returns a vector where element i is the original-string position of
 propertized-string character i.  Characters removed by markup processing
-\(delimiters like ** ` ~~ etc.\) are skipped via a two-pointer walk."
+\(delimiters like ** ` ~~ etc.\) are skipped via a two-pointer walk.
+
+Example: ORIGINAL = \"**bold**\" PROPERTIZED = \"bold\"
+  map[0]=2  map[1]=3  map[2]=4  map[3]=5
+  positions 0,1,6,7 (the ** delimiters) are unmapped."
   (let ((map (make-vector (length propertized) 0))
         (oi 0)
         (pi 0)
@@ -206,9 +210,12 @@ propertized-string character i.  Characters removed by markup processing
 
 (defun markdown-overlays--apply-inline-overlays (buf-start buf-end)
   "Apply inline markdown overlays between BUF-START and BUF-END.
-Uses `markdown-overlays--propertize-inline-markdown' to parse the text, then
-creates in-place overlays that hide delimiters and style content.
-Text remains navigable — point can move through all visible characters."
+Uses `markdown-overlays--propertize-inline-markdown' to parse the text,
+then creates in-place overlays that hide delimiters and style content.
+Text remains navigable — point can move through all visible characters.
+
+For \"**bold**\": invisible overlays hide the ** pairs, a face overlay
+applies bold to \"bold\".  The buffer text is unchanged underneath."
   (let* ((original (buffer-substring-no-properties buf-start buf-end))
          (propertized (markdown-overlays--propertize-inline-markdown original))
          (plen (length propertized))

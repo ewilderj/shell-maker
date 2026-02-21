@@ -33,16 +33,46 @@
 
 (require 'seq)
 
+(defconst markdown-overlays--inline-code-regexp
+  (rx "`" (group (+ (not (any "`")))) "`")
+  "Regexp matching inline code spans.")
+
+(defconst markdown-overlays--link-regexp
+  (rx "[" (group (+ (not (any "]")))) "]("
+      (group (+ (not (any ")")))) ")")
+  "Regexp matching Markdown links.")
+
+(defconst markdown-overlays--bold-italic-regexp
+  (rx "***" (group (+ (not (any "*")))) "***")
+  "Regexp matching bold-italic text.")
+
+(defconst markdown-overlays--bold-regexp
+  (rx (or (seq "**" (group (+? anything)) "**")
+          (seq "__" (group (+ (not (any "_")))) "__")))
+  "Regexp matching bold text.")
+
+(defconst markdown-overlays--italic-regexp
+  (rx (group (or string-start (not (any "\\"))))
+      (or (seq "*" (group (+ (not (any "*")))) "*")
+          (seq "_" (group (+ (not (any "_")))) "_")))
+  "Regexp matching italic text with lookbehind.")
+
+(defconst markdown-overlays--strikethrough-regexp
+  (rx "~~" (group (+? anything)) "~~")
+  "Regexp matching strikethrough text.")
+
 (defun markdown-overlays--apply-face-to-unpropertized (str face)
   "Apply FACE to characters in STR lacking a `face' property.
-Characters that already have a `face' property are left untouched."
+Characters that already have a `face' property are left untouched.
+Walks by property spans rather than individual characters."
   (let ((result (copy-sequence str))
-        (i 0)
-        (len (length str)))
-    (while (< i len)
-      (unless (get-text-property i 'face result)
-        (put-text-property i (1+ i) 'face face result))
-      (setq i (1+ i)))
+        (len (length str))
+        (pos 0))
+    (while (< pos len)
+      (let ((next (next-single-property-change pos 'face result len)))
+        (unless (get-text-property pos 'face result)
+          (put-text-property pos next 'face face result))
+        (setq pos next)))
     result))
 
 (defun markdown-overlays--replace-markup (str regex groups face
@@ -100,16 +130,14 @@ rendering and buffer overlay rendering."
     ;; Process inline code FIRST so its contents are protected from
     ;; bold/italic processing (e.g., `**text**` should render as code).
     (setq result (markdown-overlays--replace-markup
-                  result (rx "`" (group (+ (not (any "`")))) "`")
+                  result markdown-overlays--inline-code-regexp
                   '(1) 'font-lock-doc-markup-face))
 
     ;; Links need special handling for keymap.
     ;; Skip matches inside already-propertized regions (e.g. inline code).
-    (let ((link-re (rx "[" (group (+ (not (any "]")))) "]("
-                       (group (+ (not (any ")")))) ")"))
-          (parts nil)
+    (let ((parts nil)
           (pos 0))
-      (while (string-match link-re result pos)
+      (while (string-match markdown-overlays--link-regexp result pos)
         (let ((match-start (match-beginning 0))
               (match-end (match-end 0)))
           (if (get-text-property match-start 'face result)
@@ -137,21 +165,18 @@ rendering and buffer overlay rendering."
 
     ;; Bold-italic, bold
     (setq result (markdown-overlays--replace-markup
-                  result (rx "***" (group (+ (not (any "*")))) "***")
+                  result markdown-overlays--bold-italic-regexp
                   '(1) '(:weight bold :slant italic)))
     (setq result (markdown-overlays--replace-markup
-                  result (rx (or (seq "**" (group (+? anything)) "**")
-                                 (seq "__" (group (+ (not (any "_")))) "__")))
+                  result markdown-overlays--bold-regexp
                   '(1 2) 'bold))
     ;; Italic: nestable inside bold, with lookbehind for escaped \*text\*
     (setq result (markdown-overlays--replace-markup
-                  result (rx (group (or string-start (not (any "\\"))))
-                             (or (seq "*" (group (+ (not (any "*")))) "*")
-                                 (seq "_" (group (+ (not (any "_")))) "_")))
+                  result markdown-overlays--italic-regexp
                   '(2 3) 'italic t 1))
     ;; Strikethrough: nestable inside bold/italic
     (setq result (markdown-overlays--replace-markup
-                  result (rx "~~" (group (+? anything)) "~~")
+                  result markdown-overlays--strikethrough-regexp
                   '(1) '(:strike-through t) t))
 
     result))
