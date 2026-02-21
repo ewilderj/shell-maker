@@ -58,7 +58,7 @@ entirely (protecting code spans from further processing).
 
 When PREFIX-GROUP is non-nil, that group's text is preserved verbatim
 before the styled text (used for italic's lookbehind character)."
-  (let ((new-result "")
+  (let ((parts nil)
         (pos 0))
     (while (string-match regex str pos)
       (let* ((match-start (match-beginning 0))
@@ -72,8 +72,7 @@ before the styled text (used for italic's lookbehind character)."
             ;; Inside a protected region — emit verbatim and skip past.
             (let ((prop-end (next-single-property-change
                              match-start 'face str (length str))))
-              (setq new-result (concat new-result
-                                       (substring str pos prop-end)))
+              (push (substring str pos prop-end) parts)
               (setq pos prop-end))
           ;; Extract inner text from first non-nil capture group
           (let* ((inner (seq-some (lambda (g) (match-string g str)) groups))
@@ -84,11 +83,13 @@ before the styled text (used for italic's lookbehind character)."
                                s)
                            (markdown-overlays--apply-face-to-unpropertized
                             inner face))))
-            (setq new-result (concat new-result
-                                     (substring str pos match-start)
-                                     prefix styled))
+            (push (substring str pos match-start) parts)
+            (when (> (length prefix) 0)
+              (push prefix parts))
+            (push styled parts)
             (setq pos match-end)))))
-    (concat new-result (substring str pos))))
+    (push (substring str pos) parts)
+    (apply #'concat (nreverse parts))))
 
 (defun markdown-overlays--propertize-inline-markdown (content)
   "Process inline markdown in CONTENT string, return propertized string.
@@ -106,7 +107,7 @@ rendering and buffer overlay rendering."
     ;; Skip matches inside already-propertized regions (e.g. inline code).
     (let ((link-re (rx "[" (group (+ (not (any "]")))) "]("
                        (group (+ (not (any ")")))) ")"))
-          (new-result "")
+          (parts nil)
           (pos 0))
       (while (string-match link-re result pos)
         (let ((match-start (match-beginning 0))
@@ -114,25 +115,25 @@ rendering and buffer overlay rendering."
           (if (get-text-property match-start 'face result)
               (let ((prop-end (next-single-property-change
                                match-start 'face result (length result))))
-                (setq new-result (concat new-result
-                                         (substring result pos prop-end)))
+                (push (substring result pos prop-end) parts)
                 (setq pos prop-end))
             (let ((title (match-string 1 result))
                   (url (match-string 2 result))
                   (link-map (make-sparse-keymap)))
-              (setq new-result (concat new-result (substring result pos match-start)))
+              (push (substring result pos match-start) parts)
               (define-key link-map [mouse-1]
                           (lambda () (interactive) (browse-url url)))
               (define-key link-map (kbd "RET")
                           (lambda () (interactive) (browse-url url)))
-              (setq new-result (concat new-result
-                                       (propertize title
-                                                   'face 'link
-                                                   'mouse-face 'highlight
-                                                   'keymap link-map
-                                                   'help-echo url)))
+              (push (propertize title
+                                'face 'link
+                                'mouse-face 'highlight
+                                'keymap link-map
+                                'help-echo url)
+                    parts)
               (setq pos match-end)))))
-      (setq result (concat new-result (substring result pos))))
+      (push (substring result pos) parts)
+      (setq result (apply #'concat (nreverse parts))))
 
     ;; Bold-italic, bold
     (setq result (markdown-overlays--replace-markup
