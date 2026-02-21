@@ -215,18 +215,20 @@ Text remains navigable — point can move through all visible characters."
          (olen (length original)))
     (when (< plen olen)
       (let ((pos-map (markdown-overlays--compute-position-map original propertized)))
-        ;; 1. Create invisible overlays for deleted characters (delimiters)
-        (let ((mapped (make-hash-table :test 'eq))
+        ;; 1. Create invisible overlays for deleted characters (delimiters).
+        ;; pos-map values are monotonically increasing, so we merge-walk
+        ;; against the original positions to find unmapped (delimiter) ranges.
+        (let ((mi 0)
               (range-start nil))
-          (dotimes (i plen)
-            (puthash (aref pos-map i) t mapped))
           (dotimes (i olen)
-            (if (gethash i mapped)
-                (when range-start
-                  (markdown-overlays--put
-                   (make-overlay (+ buf-start range-start) (+ buf-start i))
-                   'evaporate t 'invisible t)
-                  (setq range-start nil))
+            (if (and (< mi plen) (= i (aref pos-map mi)))
+                (progn
+                  (when range-start
+                    (markdown-overlays--put
+                     (make-overlay (+ buf-start range-start) (+ buf-start i))
+                     'evaporate t 'invisible t)
+                    (setq range-start nil))
+                  (setq mi (1+ mi)))
               (unless range-start
                 (setq range-start i))))
           (when range-start
