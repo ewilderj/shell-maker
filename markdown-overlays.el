@@ -36,6 +36,7 @@
 
 (require 'map)
 (require 'org-faces)
+(require 'markdown-overlays-parser)
 (require 'markdown-overlays-tables)
 
 (defcustom markdown-overlays-highlight-blocks t
