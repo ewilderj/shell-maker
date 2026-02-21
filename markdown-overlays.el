@@ -97,15 +97,10 @@ Objective-C -> (\"objective-c\" . \"objc\")"
          (table-ranges (seq-map (lambda (table)
                                   (cons (map-elt table :start)
                                         (map-elt table :end)))
-                                tables))
-         (inline-codes (markdown-overlays--markdown-inline-codes
-                        (append source-block-ranges table-ranges)))
-         (inline-code-ranges (seq-map (lambda (inline)
-                                        (map-elt inline 'body))
-                                      inline-codes))
-         (avoid-ranges (append inline-code-ranges
-                               source-block-ranges
-                               table-ranges)))
+                                 tables))
+         (block-ranges (sort (append (copy-sequence source-block-ranges)
+                                     (copy-sequence table-ranges))
+                             (lambda (a b) (< (car a) (car b))))))
     (markdown-overlays-remove)
     (dolist (block source-blocks)
       (markdown-overlays--fontify-source-block
@@ -122,15 +117,7 @@ Objective-C -> (\"objective-c\" . \"objc\")"
     (when markdown-overlays-insert-dividers
       (dolist (divider (markdown-overlays--divider-markers))
         (markdown-overlays--fontify-divider (car divider) (cdr divider))))
-    (dolist (link (markdown-overlays--markdown-links avoid-ranges))
-      (markdown-overlays--fontify-link
-       (map-elt link 'start)
-       (map-elt link 'end)
-       (car (map-elt link 'title))
-       (cdr (map-elt link 'title))
-       (car (map-elt link 'url))
-       (cdr (map-elt link 'url))))
-    (dolist (header (markdown-overlays--markdown-headers avoid-ranges))
+    (dolist (header (markdown-overlays--markdown-headers block-ranges))
       (markdown-overlays--fontify-header
        (map-elt header 'start)
        (map-elt header 'end)
@@ -139,28 +126,11 @@ Objective-C -> (\"objective-c\" . \"objc\")"
        (car (map-elt header 'title))
        (cdr (map-elt header 'title))
        (map-elt header 'needs-trailing-newline)))
-    (dolist (bold (markdown-overlays--markdown-bolds avoid-ranges))
-      (markdown-overlays--fontify-bold
-       (map-elt bold 'start)
-       (map-elt bold 'end)
-       (car (map-elt bold 'text))
-       (cdr (map-elt bold 'text))))
-    (dolist (italic (markdown-overlays--markdown-italics avoid-ranges))
-      (markdown-overlays--fontify-italic
-       (map-elt italic 'start)
-       (map-elt italic 'end)
-       (car (map-elt italic 'text))
-       (cdr (map-elt italic 'text))))
-    (dolist (strikethrough (markdown-overlays--markdown-strikethroughs avoid-ranges))
-      (markdown-overlays--fontify-strikethrough
-       (map-elt strikethrough 'start)
-       (map-elt strikethrough 'end)
-       (car (map-elt strikethrough 'text))
-       (cdr (map-elt strikethrough 'text))))
-    (dolist (inline-code inline-codes)
-      (markdown-overlays--fontify-inline-code
-       (car (map-elt inline-code 'body))
-       (cdr (map-elt inline-code 'body))))
+    ;; Unified inline formatting (bold, italic, code, links, strikethrough).
+    ;; Process each region outside source blocks and tables.
+    (dolist (range (markdown-overlays--invert-ranges
+                    block-ranges (point-min) (point-max)))
+      (markdown-overlays--apply-inline-overlays (car range) (cdr range)))
     (markdown-overlays--fontify-tables tables)
     (when markdown-overlays-render-latex
       (require 'org)
@@ -168,7 +138,7 @@ Objective-C -> (\"objective-c\" . \"objc\")"
       (let ((major-mode 'org-mode))
         (save-excursion
           (dolist (range (markdown-overlays--invert-ranges
-                          avoid-ranges
+                          block-ranges
                           (point-min)
                           (point-max)))
             (org-format-latex
@@ -212,6 +182,71 @@ Objective-C -> (\"objective-c\" . \"objc\")"
   (while props
     (overlay-put overlay 'category 'markdown-overlays)
     (overlay-put overlay (pop props) (pop props))))
+
+(defun markdown-overlays--compute-position-map (original propertized)
+  "Map each position in PROPERTIZED back to its position in ORIGINAL.
+Returns a vector where element i is the original-string position of
+propertized-string character i.  Characters removed by markup processing
+\(delimiters like ** ` ~~ etc.\) are skipped via a two-pointer walk."
+  (let ((map (make-vector (length propertized) 0))
+        (oi 0)
+        (pi 0)
+        (olen (length original))
+        (plen (length propertized)))
+    (while (< pi plen)
+      (while (and (< oi olen)
+                  (not (eq (aref original oi) (aref propertized pi))))
+        (setq oi (1+ oi)))
+      (when (< oi olen)
+        (aset map pi oi)
+        (setq oi (1+ oi)))
+      (setq pi (1+ pi)))
+    map))
+
+(defun markdown-overlays--apply-inline-overlays (buf-start buf-end)
+  "Apply inline markdown overlays between BUF-START and BUF-END.
+Uses `markdown-overlays--propertize-inline' to parse the text, then
+creates in-place overlays that hide delimiters and style content.
+Text remains navigable — point can move through all visible characters."
+  (let* ((original (buffer-substring-no-properties buf-start buf-end))
+         (propertized (markdown-overlays--propertize-inline original))
+         (plen (length propertized))
+         (olen (length original)))
+    (when (< plen olen)
+      (let ((pos-map (markdown-overlays--compute-position-map original propertized)))
+        ;; 1. Create invisible overlays for deleted characters (delimiters)
+        (let ((mapped (make-hash-table :test 'eq))
+              (range-start nil))
+          (dotimes (i plen)
+            (puthash (aref pos-map i) t mapped))
+          (dotimes (i olen)
+            (if (gethash i mapped)
+                (when range-start
+                  (markdown-overlays--put
+                   (make-overlay (+ buf-start range-start) (+ buf-start i))
+                   'evaporate t 'invisible t)
+                  (setq range-start nil))
+              (unless range-start
+                (setq range-start i))))
+          (when range-start
+            (markdown-overlays--put
+             (make-overlay (+ buf-start range-start) (+ buf-start olen))
+             'evaporate t 'invisible t)))
+        ;; 2. Apply text properties from propertized string as overlays
+        (let ((pos 0))
+          (while (< pos plen)
+            (let ((next (or (next-property-change pos propertized) plen))
+                  (props (text-properties-at pos propertized)))
+              (when props
+                (let ((ov (make-overlay
+                           (+ buf-start (aref pos-map pos))
+                           (+ buf-start (aref pos-map (1- next)) 1))))
+                  (overlay-put ov 'category 'markdown-overlays)
+                  (overlay-put ov 'evaporate t)
+                  (let ((pl (copy-sequence props)))
+                    (while pl
+                      (overlay-put ov (pop pl) (pop pl))))))
+              (setq pos next))))))))
 
 (defun markdown-overlays--resolve-internal-language (language)
   "Resolve external Markdown LANGUAGE to Emacs internal.
@@ -308,46 +343,6 @@ Use QUOTES1-START QUOTES1-END LANG LANG-START LANG-END BODY-START
    'display
    (concat (propertize (concat (make-string (window-body-width) ? ) "")
                        'face '(:underline t)) "\n")))
-
-(defun markdown-overlays--markdown-links (&optional avoid-ranges)
-  "Extract markdown links with AVOID-RANGES."
-  (let ((links '())
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              (rx (seq "["
-                       (group (one-or-more (not (any "]"))))
-                       "]"
-                       "("
-                       (group (one-or-more (not (any ")"))))
-                       ")"))
-              nil t)
-        (if-let ((begin (match-beginning 0))
-                 (end (match-end 0))
-                 (title-start (match-beginning 1))
-                 (title-end (match-end 1))
-                 (url-start (match-beginning 2))
-                 (url-end (match-end 2)))
-            (unless (seq-find (lambda (avoided)
-                                (and (>= begin (car avoided))
-                                     (<= end (cdr avoided))))
-                              avoid-ranges)
-              (push
-               (list
-                'start begin
-                'end end
-                'title (cons title-start title-end)
-                'url (cons url-start url-end))
-               links))
-          (let ((message-log-max t))
-            (message "markdown-overlays: Warning: incomplete link match at position %s: %S"
-                     (match-beginning 0)
-                     (buffer-substring-no-properties
-                      (match-beginning 0)
-                      (min (+ (match-beginning 0) 50) (point-max))))))))
-    (nreverse links)))
-
 (defun markdown-overlays--markdown-headers (&optional avoid-ranges)
   "Extract markdown headers with AVOID-RANGES."
   (let ((headers '())
@@ -388,117 +383,6 @@ Use QUOTES1-START QUOTES1-END LANG LANG-START LANG-END BODY-START
                       (match-beginning 0)
                       (min (+ (match-beginning 0) 50) (point-max))))))))
     (nreverse headers)))
-
-(defun markdown-overlays--fontify-link (start end title-start title-end url-start url-end)
-  "Fontify a markdown link.
-Use START END TITLE-START TITLE-END URL-START URL-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start title-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as link
-  (markdown-overlays--put
-   (make-overlay title-start title-end)
-   'evaporate t
-   'face 'link)
-  ;; Make RET open the URL
-  (define-key (let ((map (make-sparse-keymap)))
-                (define-key map [mouse-1]
-                            (lambda () (interactive)
-                              (browse-url (buffer-substring-no-properties url-start url-end))))
-                (define-key map (kbd "RET")
-                            (lambda () (interactive)
-                              (browse-url (buffer-substring-no-properties url-start url-end))))
-                (markdown-overlays--put
-                 (make-overlay title-start title-end)
-                 'evaporate t
-                 'keymap map)
-                map)
-              [remap self-insert-command] 'ignore)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay title-end end)
-   'evaporate t
-   'invisible 't))
-
-(defun markdown-overlays--markdown-bolds (&optional avoid-ranges)
-  "Extract markdown bolds with AVOID-RANGES."
-  (let ((bolds '())
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              (rx (or line-start (syntax whitespace))
-                  (group
-                   (or (seq "**" (group (one-or-more (not (any "\n*")))) "**")
-                       (seq "__" (group (one-or-more (not (any "\n_")))) "__")))
-                  (or (syntax punctuation) (syntax whitespace) line-end))
-              nil t)
-        (if-let ((begin (match-beginning 1))
-                 (end (match-end 1))
-                 (text-start (or (match-beginning 2)
-                                 (match-beginning 3)))
-                 (text-end (or (match-end 2)
-                               (match-end 3))))
-            (unless (seq-find (lambda (avoided)
-                                (and (>= begin (car avoided))
-                                     (<= end (cdr avoided))))
-                              avoid-ranges)
-              (push
-               (list
-                'start begin
-                'end end
-                'text (cons text-start text-end))
-               bolds))
-          (let ((message-log-max t))
-            (message "markdown-overlays: Warning: incomplete bold match at position %s: %S"
-                     (match-beginning 0)
-                     (buffer-substring-no-properties
-                      (match-beginning 0)
-                      (min (+ (match-beginning 0) 50) (point-max))))))))
-    (nreverse bolds)))
-
-(defun markdown-overlays--markdown-italics (&optional avoid-ranges)
-  "Extract markdown italics with AVOID-RANGES."
-  (let ((italics '())
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              (rx (or (group (or bol (one-or-more (any "\n \t")))
-                             (group "*")
-                             (group (one-or-more (not (any "\n*")))) "*")
-                      (group (or bol (one-or-more (any "\n \t")))
-                             (group "_")
-                             (group (one-or-more (not (any "\n_")))) "_")))
-              nil t)
-        (if-let ((begin (match-beginning 0))
-                 (end (match-end 0))
-                 (start-pos (or (match-beginning 2)
-                                (match-beginning 5)))
-                 (text-start (or (match-beginning 3)
-                                 (match-beginning 6)))
-                 (text-end (or (match-end 3)
-                               (match-end 6))))
-            (unless (seq-find (lambda (avoided)
-                                (and (>= begin (car avoided))
-                                     (<= end (cdr avoided))))
-                              avoid-ranges)
-              (push
-               (list
-                'start start-pos
-                'end end
-                'text (cons text-start text-end))
-               italics))
-          (let ((message-log-max t))
-            (message "markdown-overlays: Warning: incomplete italic match at position %s: %S"
-                     (match-beginning 0)
-                     (buffer-substring-no-properties
-                      (match-beginning 0)
-                      (min (+ (match-beginning 0) 50) (point-max))))))))
-    (nreverse italics)))
-
 (defun markdown-overlays--fontify-header (_start end level-start level-end title-start title-end &optional needs-trailing-newline)
   "Fontify a markdown header.
 Use START END LEVEL-START LEVEL-END TITLE-START TITLE-END and
@@ -536,145 +420,6 @@ NEEDS-TRAILING-NEWLINE."
      (make-overlay (1+ end) (1+ end))
      'evaporate t
      'before-string "\n")))
-
-(defun markdown-overlays--fontify-bold (start end text-start text-end)
-  "Fontify a markdown bold.
-Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as bold
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face 'bold)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
-
-(defun markdown-overlays--fontify-italic (start end text-start text-end)
-  "Fontify a markdown italic.
-Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as italic
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face 'italic)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
-
-(defun markdown-overlays--markdown-strikethroughs (&optional avoid-ranges)
-  "Extract markdown strikethroughs with AVOID-RANGES."
-  (let ((strikethroughs '())
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              (rx "~~" (group (one-or-more (not (any "\n~")))) "~~")
-              nil t)
-        (if-let ((begin (match-beginning 0))
-                 (end (match-end 0))
-                 (text-start (match-beginning 1))
-                 (text-end (match-end 1)))
-            (unless (seq-find (lambda (avoided)
-                                (and (>= begin (car avoided))
-                                     (<= end (cdr avoided))))
-                              avoid-ranges)
-              (push
-               (list
-                'start begin
-                'end end
-                'text (cons text-start text-end))
-               strikethroughs))
-          (let ((message-log-max t))
-            (message "markdown-overlays: Warning: incomplete strikethrough match at position %s: %S"
-                     (match-beginning 0)
-                     (buffer-substring-no-properties
-                      (match-beginning 0)
-                      (min (+ (match-beginning 0) 50) (point-max))))))))
-    (nreverse strikethroughs)))
-
-(defun markdown-overlays--fontify-strikethrough (start end text-start text-end)
-  "Fontify a markdown strikethrough.
-Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as strikethrough
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face '(:strike-through t))
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
-
-(defun markdown-overlays--markdown-inline-codes (&optional avoid-ranges)
-  "Get a list of all inline markdown code in buffer with AVOID-RANGES."
-  (let ((codes '())
-        (case-fold-search nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              "`\\([^`\n]+\\)`"
-              nil t)
-        (if-let ((begin (match-beginning 0))
-                 (end (match-end 0))
-                 (body-start (match-beginning 1))
-                 (body-end (match-end 1)))
-            (if-let ((avoided (seq-find (lambda (avoided)
-                                          (not (or (> begin (cdr avoided))
-                                                   (< end (car avoided)))))
-                                        avoid-ranges)))
-                ;; Match overlaps an avoid range — skip past range end and retry
-                (goto-char (1+ (cdr avoided)))
-              (push
-               (list
-                'body (cons body-start body-end)) codes))
-          (let ((message-log-max t))
-            (message "markdown-overlays: Warning: incomplete inline code match at position %s: %S"
-                     (match-beginning 0)
-                     (buffer-substring-no-properties
-                      (match-beginning 0)
-                      (min (+ (match-beginning 0) 50) (point-max))))))))
-    (nreverse codes)))
-
-(defun markdown-overlays--fontify-inline-code (body-start body-end)
-  "Fontify a source block.
-Use QUOTES1-START QUOTES1-END LANG LANG-START LANG-END BODY-START
- BODY-END QUOTES2-START and QUOTES2-END."
-  ;; Hide ```
-  (markdown-overlays--put
-   (make-overlay (1- body-start)
-                 body-start)
-   'evaporate t
-   'invisible 't)
-  (markdown-overlays--put
-   (make-overlay body-end
-                 (1+ body-end))
-   'evaporate t
-   'invisible 't)
-  (markdown-overlays--put
-   (make-overlay body-start body-end)
-   'evaporate t
-   'face 'font-lock-doc-markup-face))
-
 (defun markdown-overlays--invert-ranges (ranges min max)
   "Invert a list of RANGES within the interval [MIN, MAX].
 Each range is a cons of start and end integers."

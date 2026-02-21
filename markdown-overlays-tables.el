@@ -318,10 +318,11 @@ before the styled text (used for italic's lookbehind character)."
             (setq pos match-end)))))
     (concat new-result (substring str pos))))
 
-(defun markdown-overlays--process-cell-content (content)
-  "Process markdown syntax in CONTENT string, returning propertized string.
-Handles: links [text](url), bold **text**/__text__, italic *text*/_text_,
-bold-italic ***text***, inline code `text`, and strikethrough ~~text~~."
+(defun markdown-overlays--propertize-inline (content)
+  "Process inline markdown in CONTENT string, return propertized string.
+Strips markup delimiters and applies faces for: inline code, links,
+bold-italic, bold, italic, and strikethrough.  Used by both table cell
+rendering and buffer overlay rendering."
   (let ((result content))
     ;; Process inline code FIRST so its contents are protected from
     ;; bold/italic processing (e.g., `**text**` should render as code).
@@ -380,10 +381,13 @@ bold-italic ***text***, inline code `text`, and strikethrough ~~text~~."
                   result (rx "~~" (group (+? anything)) "~~")
                   '(1) '(:strike-through t) t))
 
-    ;; Scale tall characters to prevent uneven row heights
-    (setq result (markdown-overlays--table-apply-height-scaling result))
-
     result))
+
+(defun markdown-overlays--process-cell-content (content)
+  "Process markdown in CONTENT for table cell display.
+Calls `markdown-overlays--propertize-inline' and applies height scaling."
+  (markdown-overlays--table-apply-height-scaling
+   (markdown-overlays--propertize-inline content)))
 
 ;;; Glyph Height Normalization
 ;;
