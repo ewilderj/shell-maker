@@ -206,11 +206,11 @@ propertized-string character i.  Characters removed by markup processing
 
 (defun markdown-overlays--apply-inline-overlays (buf-start buf-end)
   "Apply inline markdown overlays between BUF-START and BUF-END.
-Uses `markdown-overlays--propertize-inline' to parse the text, then
+Uses `markdown-overlays--propertize-inline-markdown' to parse the text, then
 creates in-place overlays that hide delimiters and style content.
 Text remains navigable — point can move through all visible characters."
   (let* ((original (buffer-substring-no-properties buf-start buf-end))
-         (propertized (markdown-overlays--propertize-inline original))
+         (propertized (markdown-overlays--propertize-inline-markdown original))
          (plen (length propertized))
          (olen (length original)))
     (when (< plen olen)

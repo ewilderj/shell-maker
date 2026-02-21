@@ -264,9 +264,9 @@ Pipes inside backtick code spans are not treated as delimiters."
 
 (defun markdown-overlays--process-cell-content (content)
   "Process markdown in CONTENT for table cell display.
-Calls `markdown-overlays--propertize-inline' and applies height scaling."
+Calls `markdown-overlays--propertize-inline-markdown' and applies height scaling."
   (markdown-overlays--table-apply-height-scaling
-   (markdown-overlays--propertize-inline content)))
+   (markdown-overlays--propertize-inline-markdown content)))
 
 ;;; Glyph Height Normalization
 ;;

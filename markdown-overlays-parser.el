@@ -90,7 +90,7 @@ before the styled text (used for italic's lookbehind character)."
             (setq pos match-end)))))
     (concat new-result (substring str pos))))
 
-(defun markdown-overlays--propertize-inline (content)
+(defun markdown-overlays--propertize-inline-markdown (content)
   "Process inline markdown in CONTENT string, return propertized string.
 Strips markup delimiters and applies faces for: inline code, links,
 bold-italic, bold, italic, and strikethrough.  Used by both table cell
