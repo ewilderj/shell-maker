@@ -180,7 +180,7 @@ default background."
 
 (defun markdown-overlays--find-tables (&optional avoid-ranges)
   "Find all markdown tables in the buffer.
-Returns a list of alists with :start, :end, :separator-row, and :rows.
+Returns a list of alists with start, end, separator-row, and rows.
 AVOID-RANGES is a list of (start . end) cons to skip."
   (let ((tables '()))
     (save-excursion
@@ -207,20 +207,20 @@ AVOID-RANGES is a list of (start . end) cons to skip."
                       (is-sep (looking-at markdown-overlays--table-separator-regexp)))
                   (when (and (not separator-row) is-sep)
                     (setq separator-row row-num))
-                  (push (list (cons :start row-start)
-                              (cons :end (line-end-position))
-                              (cons :num row-num)
-                              (cons :separator is-sep))
+                  (push (list (cons 'start row-start)
+                              (cons 'end (line-end-position))
+                              (cons 'num row-num)
+                              (cons 'separator is-sep))
                         rows)
                   (setq row-num (1+ row-num))
                   (setq table-end (line-end-position)))
                 (forward-line 1))
               ;; Only count as table if we have at least 2 rows
               (when (>= (length rows) 2)
-                (push (list (cons :start table-start)
-                            (cons :end table-end)
-                            (cons :separator-row separator-row)
-                            (cons :rows (nreverse rows)))
+                (push (list (cons 'start table-start)
+                            (cons 'end table-end)
+                            (cons 'separator-row separator-row)
+                            (cons 'rows (nreverse rows)))
                       tables)))))))
     (nreverse tables)))
 
@@ -228,7 +228,7 @@ AVOID-RANGES is a list of (start . end) cons to skip."
 
 (defun markdown-overlays--parse-table-row (start end)
   "Parse a table row between START and END into cells.
-Returns a list of alists with :start, :end, :content for each cell.
+Returns a list of alists with start, end, content for each cell.
 Pipes inside backtick code spans are not treated as delimiters."
   (let ((cells '()))
     (save-excursion
@@ -247,9 +247,9 @@ Pipes inside backtick code spans are not treated as delimiters."
               (forward-char 1))
              ((and (eq ch ?|) (not in-code))
               (let ((cell-end (point)))
-                (push (list (cons :start cell-start)
-                            (cons :end cell-end)
-                            (cons :content (string-trim
+                (push (list (cons 'start cell-start)
+                            (cons 'end cell-end)
+                            (cons 'content (string-trim
                                             (buffer-substring-no-properties cell-start cell-end))))
                       cells)
                 (forward-char 1)
@@ -380,15 +380,15 @@ Falls back to `string-width' if `string-pixel-width' is unavailable."
 Returns a list of integers, one per column.
 Widths are based on PROCESSED content (after markdown syntax is removed)."
   (let ((widths nil))
-    (dolist (row (map-elt table :rows))
-      (unless (map-elt row :separator)
+    (dolist (row (map-elt table 'rows))
+      (unless (map-elt row 'separator)
         (let ((cells (markdown-overlays--parse-table-row
-                      (map-elt row :start)
-                      (map-elt row :end)))
+                      (map-elt row 'start)
+                      (map-elt row 'end)))
               (col 0))
           (dolist (cell cells)
             (let ((processed (markdown-overlays--process-cell-content
-                              (map-elt cell :content))))
+                              (map-elt cell 'content))))
               (if (nth col widths)
                   (setf (nth col widths)
                         (max (nth col widths)
@@ -404,15 +404,15 @@ Widths are based on PROCESSED content (after markdown syntax is removed)."
 Minimum is the longest single word in the column (to avoid breaking words).
 Based on PROCESSED content (after markdown syntax is removed)."
   (let ((min-widths nil))
-    (dolist (row (map-elt table :rows))
-      (unless (map-elt row :separator)
+    (dolist (row (map-elt table 'rows))
+      (unless (map-elt row 'separator)
         (let ((cells (markdown-overlays--parse-table-row
-                      (map-elt row :start)
-                      (map-elt row :end)))
+                      (map-elt row 'start)
+                      (map-elt row 'end)))
               (col 0))
           (dolist (cell cells)
             (let ((processed (markdown-overlays--process-cell-content
-                              (map-elt cell :content))))
+                              (map-elt cell 'content))))
               (if (nth col min-widths)
                   (setf (nth col min-widths)
                         (max (nth col min-widths)
@@ -547,15 +547,15 @@ Before: | Name | Role |       After: │ Name  │ Role     │
                          (markdown-overlays--table-allocate-widths
                           natural-widths min-widths target-width)
                        natural-widths))
-         (separator-row (map-elt table :separator-row))
-         (rows (map-elt table :rows))
+         (separator-row (map-elt table 'separator-row))
+         (rows (map-elt table 'rows))
          (data-row-num 0))  ; Track data rows for zebra striping
 
     (dolist (row rows)
-      (let* ((row-start (map-elt row :start))
-             (row-end (map-elt row :end))
-             (row-num (map-elt row :num))
-             (is-separator (map-elt row :separator))
+      (let* ((row-start (map-elt row 'start))
+             (row-end (map-elt row 'end))
+             (row-num (map-elt row 'num))
+             (is-separator (map-elt row 'separator))
              (is-header (and separator-row (< row-num separator-row)))
              (is-zebra (and markdown-overlays--table-zebra-stripe
                             (not is-header)
@@ -609,7 +609,7 @@ Before: | Name | Role |       After: │ Name  │ Role     │
                    (lambda (cell idx)
                      (let ((width (or (nth idx col-widths) 10))
                             (processed (markdown-overlays--process-cell-content
-                                        (map-elt cell :content))))
+                                        (map-elt cell 'content))))
                        (markdown-overlays--table-wrap-text processed width)))
                    cells))
                  (max-lines (max 1 (seq-max (seq-map #'length wrapped-cells))))

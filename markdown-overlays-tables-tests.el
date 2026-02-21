@@ -202,7 +202,7 @@
     (let ((tables (markdown-overlays--find-tables nil)))
       (should (= (length tables) 1))
       (let ((table (car tables)))
-        (should (= (length (map-elt table :rows)) 3))))))
+        (should (= (length (map-elt table 'rows)) 3))))))
 
 (ert-deftest markdown-overlays-tables-test-find-tables-avoids-source-blocks ()
   "Tables inside source block ranges should be excluded."
@@ -219,7 +219,7 @@
     (let ((tables (markdown-overlays--find-tables nil)))
       (should (= (length tables) 1))
       (let ((table (car tables)))
-        (should (= (length (map-elt table :rows)) 3))))))
+        (should (= (length (map-elt table 'rows)) 3))))))
 
 (ert-deftest markdown-overlays-tables-test-pipe-in-code-span ()
   "Pipes inside backtick code spans should not split cells."
@@ -228,12 +228,12 @@
     (let ((tables (markdown-overlays--find-tables nil)))
       (should (= (length tables) 1))
       (let* ((table (car tables))
-             (rows (map-elt table :rows))
+             (rows (map-elt table 'rows))
              (header (car rows))
              (cells (markdown-overlays--parse-table-row
-                     (map-elt header :start) (map-elt header :end))))
+                     (map-elt header 'start) (map-elt header 'end))))
         (should (= (length cells) 3))
-        (should (string= (string-trim (map-elt (nth 1 cells) :content)) "`x \\| y`"))))))
+        (should (string= (string-trim (map-elt (nth 1 cells) 'content)) "`x \\| y`"))))))
 
 (ert-deftest markdown-overlays-tables-test-escaped-pipe ()
   "Escaped pipes (backslash-pipe) should not split cells."
@@ -241,11 +241,11 @@
     (insert "| A | x \\| y | B |\n|---|---|---|\n| 1 | 2 | 3 |\n")
     (let* ((tables (markdown-overlays--find-tables nil))
            (table (car tables))
-           (header (car (map-elt table :rows)))
+           (header (car (map-elt table 'rows)))
            (cells (markdown-overlays--parse-table-row
-                   (map-elt header :start) (map-elt header :end))))
+                   (map-elt header 'start) (map-elt header 'end))))
       (should (= (length cells) 3))
-      (should (string= (string-trim (map-elt (nth 1 cells) :content)) "x \\| y")))))
+      (should (string= (string-trim (map-elt (nth 1 cells) 'content)) "x \\| y")))))
 
 (ert-deftest markdown-overlays-tables-test-nested-bold-italic ()
   "Bold wrapping italic (**bold *italic* bold**) should apply both faces."
