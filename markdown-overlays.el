@@ -310,22 +310,24 @@ Also sets a `markdown-overlays' marker property so
 only properties set by this package.
 PROPS is a plist of property-value pairs, e.g.
   (markdown-overlays--put-text-props 1 5 \\='face \\='bold)"
-  (put-text-property start end 'markdown-overlays t)
-  (while props
-    (put-text-property start end (pop props) (pop props))))
+  (let ((inhibit-read-only t))
+    (put-text-property start end 'markdown-overlays t)
+    (while props
+      (put-text-property start end (pop props) (pop props)))))
 
 (defun markdown-overlays--remove-text-props ()
   "Remove all text properties set by `markdown-overlays--put-text-props'.
 Walks the buffer and strips `face', `invisible', and `display'
 properties only from regions bearing the `markdown-overlays' marker."
-  (let ((pos (point-min)))
+  (let ((inhibit-read-only t)
+        (pos (point-min)))
     (while (< pos (point-max))
       (if (get-text-property pos 'markdown-overlays)
           (let ((end (next-single-property-change
                       pos 'markdown-overlays nil (point-max))))
             (remove-text-properties
-             pos end '(face nil invisible nil display nil
-                       markdown-overlays nil))
+             pos end '(face nil font-lock-face nil invisible nil
+                       display nil markdown-overlays nil))
             (setq pos end))
         (setq pos (or (next-single-property-change
                        pos 'markdown-overlays nil (point-max))
@@ -660,40 +662,16 @@ NEEDS-TRAILING-NEWLINE."
 (defun markdown-overlays--fontify-bold (start end text-start text-end)
   "Fontify a markdown bold.
 Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as bold
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face 'bold)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
+  (markdown-overlays--put-text-props start text-start 'invisible t)
+  (markdown-overlays--put-text-props text-start text-end 'font-lock-face 'bold)
+  (markdown-overlays--put-text-props text-end end 'invisible t))
 
 (defun markdown-overlays--fontify-italic (start end text-start text-end)
   "Fontify a markdown italic.
 Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as italic
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face 'italic)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
+  (markdown-overlays--put-text-props start text-start 'invisible t)
+  (markdown-overlays--put-text-props text-start text-end 'font-lock-face 'italic)
+  (markdown-overlays--put-text-props text-end end 'invisible t))
 
 (defun markdown-overlays--markdown-strikethroughs (&optional avoid-ranges)
   "Extract markdown strikethroughs with AVOID-RANGES."
@@ -729,21 +707,9 @@ Use START END TEXT-START TEXT-END."
 (defun markdown-overlays--fontify-strikethrough (start end text-start text-end)
   "Fontify a markdown strikethrough.
 Use START END TEXT-START TEXT-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start text-start)
-   'evaporate t
-   'invisible 't)
-  ;; Show title as strikethrough
-  (markdown-overlays--put
-   (make-overlay text-start text-end)
-   'evaporate t
-   'face '(:strike-through t))
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay text-end end)
-   'evaporate t
-   'invisible 't))
+  (markdown-overlays--put-text-props start text-start 'invisible t)
+  (markdown-overlays--put-text-props text-start text-end 'font-lock-face '(:strike-through t))
+  (markdown-overlays--put-text-props text-end end 'invisible t))
 
 (defun markdown-overlays--markdown-inline-codes (&optional avoid-ranges)
   "Get a list of all inline markdown code in buffer with AVOID-RANGES."
@@ -776,24 +742,12 @@ Use START END TEXT-START TEXT-END."
     (nreverse codes)))
 
 (defun markdown-overlays--fontify-inline-code (body-start body-end)
-  "Fontify a source block.
-Use QUOTES1-START QUOTES1-END LANG LANG-START LANG-END BODY-START
- BODY-END QUOTES2-START and QUOTES2-END."
-  ;; Hide ```
-  (markdown-overlays--put
-   (make-overlay (1- body-start)
-                 body-start)
-   'evaporate t
-   'invisible 't)
-  (markdown-overlays--put
-   (make-overlay body-end
-                 (1+ body-end))
-   'evaporate t
-   'invisible 't)
-  (markdown-overlays--put
-   (make-overlay body-start body-end)
-   'evaporate t
-   'face 'font-lock-doc-markup-face))
+  "Fontify an inline code span.
+Use BODY-START and BODY-END."
+  (markdown-overlays--put-text-props (1- body-start) body-start 'invisible t)
+  (markdown-overlays--put-text-props body-end (1+ body-end) 'invisible t)
+  (markdown-overlays--put-text-props body-start body-end
+                                     'font-lock-face 'font-lock-doc-markup-face))
 
 (defun markdown-overlays--invert-ranges (ranges min max)
   "Invert a list of RANGES within the interval [MIN, MAX].
