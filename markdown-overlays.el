@@ -126,8 +126,9 @@ Objective-C -> (\"objective-c\" . \"objc\")"
   "Regexp matching markdown inline code.")
 
 (defun markdown-overlays-remove ()
-  "Remove all Markdown overlays."
-  (remove-overlays (point-min) (point-max) 'category 'markdown-overlays))
+  "Remove all Markdown overlays and text properties."
+  (remove-overlays (point-min) (point-max) 'category 'markdown-overlays)
+  (markdown-overlays--remove-text-props))
 
 (defun markdown-overlays-put ()
   "Put all Markdown overlays.
@@ -301,6 +302,34 @@ Return an alist with details of all overlays added:
   (while props
     (overlay-put overlay 'category 'markdown-overlays)
     (overlay-put overlay (pop props) (pop props))))
+
+(defun markdown-overlays--put-text-props (start end &rest props)
+  "Apply text properties PROPS between START and END.
+Also sets a `markdown-overlays' marker property so
+`markdown-overlays--remove-text-props' can find and clean up
+only properties set by this package.
+PROPS is a plist of property-value pairs, e.g.
+  (markdown-overlays--put-text-props 1 5 \\='face \\='bold)"
+  (put-text-property start end 'markdown-overlays t)
+  (while props
+    (put-text-property start end (pop props) (pop props))))
+
+(defun markdown-overlays--remove-text-props ()
+  "Remove all text properties set by `markdown-overlays--put-text-props'.
+Walks the buffer and strips `face', `invisible', and `display'
+properties only from regions bearing the `markdown-overlays' marker."
+  (let ((pos (point-min)))
+    (while (< pos (point-max))
+      (if (get-text-property pos 'markdown-overlays)
+          (let ((end (next-single-property-change
+                      pos 'markdown-overlays nil (point-max))))
+            (remove-text-properties
+             pos end '(face nil invisible nil display nil
+                       markdown-overlays nil))
+            (setq pos end))
+        (setq pos (or (next-single-property-change
+                       pos 'markdown-overlays nil (point-max))
+                      (point-max)))))))
 
 (defun markdown-overlays--resolve-internal-language (language)
   "Resolve external Markdown LANGUAGE to Emacs internal.
