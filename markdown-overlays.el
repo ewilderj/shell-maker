@@ -369,55 +369,52 @@ Use QUOTES1-START QUOTES1-END LANG LANG-START LANG-END BODY-START
                           (kill-ring-save body-start body-end)
                           (message "Copied")))))
   ;; Hide end "```" altogether.
-  (markdown-overlays--put
-   (make-overlay quotes2-start quotes2-end)
-   'evaporate t
-   'invisible 't)
+  (markdown-overlays--put-text-props quotes2-start quotes2-end 'invisible t)
   (unless (eq lang-start lang-end)
-    (markdown-overlays--put
-     (make-overlay lang-start lang-end)
-     'evaporate t
-     'face '(:box t))
-    (markdown-overlays--put
-     (make-overlay lang-end (1+ lang-end))
-     'evaporate t
-     'display "\n\n"))
+    (markdown-overlays--put-text-props lang-start lang-end
+                                       'font-lock-face '(:box t))
+    (markdown-overlays--put-text-props lang-end (1+ lang-end)
+                                       'display "
+
+"))
   (let ((lang-mode (intern (concat (or
                                     (markdown-overlays--resolve-internal-language lang)
                                     (downcase (string-trim lang)))
                                    "-mode")))
-        (string (buffer-substring-no-properties body-start body-end)))
+        (string (buffer-substring-no-properties body-start body-end))
+        (propertized-text))
     (if (and markdown-overlays-highlight-blocks
              (fboundp lang-mode))
-        (let ((propertized
-               (with-current-buffer
-                   (get-buffer-create
-                    (format " *markdown-overlays-fontification:%s*" lang-mode))
-                 (let ((inhibit-modification-hooks nil)
-                       (inhibit-message t))
-                   (erase-buffer)
-                   ;; Additional space ensures property change.
-                   (insert string " ")
-                   (funcall lang-mode)
-                   (font-lock-ensure))
-                 (buffer-string)))
-              (len (- body-end body-start))
-              (pos 0))
-          (setq len (min len (length propertized)))
-          (while (< pos len)
-            (let ((next (next-single-property-change
-                         pos 'face propertized len))
-                  (face (get-text-property pos 'face propertized)))
-              (when face
-                (markdown-overlays--put
-                 (make-overlay (+ body-start pos) (+ body-start next))
-                 'evaporate t
-                 'face face))
-              (setq pos next))))
-      (markdown-overlays--put
-       (make-overlay body-start body-end)
-       'evaporate t
-       'face 'font-lock-doc-markup-face))))
+        (progn
+          (setq propertized-text
+                (with-current-buffer
+                    (get-buffer-create
+                     (format " *markdown-overlays-fontification:%s*" lang-mode))
+                  (let ((inhibit-modification-hooks nil)
+                        (inhibit-message t))
+                    (erase-buffer)
+                    ;; Additional space ensures property change.
+                    (insert string " ")
+                    (funcall lang-mode)
+                    (font-lock-ensure))
+                  (buffer-string)))
+          ;; Apply syntax faces in spans rather than per-character.
+          (let ((pos 0)
+                (len (length propertized-text)))
+            (while (< pos len)
+              (let* ((face (get-text-property pos 'face propertized-text))
+                     (next (or (next-single-property-change
+                                pos 'face propertized-text)
+                               len)))
+                (when face
+                  (markdown-overlays--put-text-props
+                   (+ body-start pos)
+                   (+ body-start (min next (length string)))
+                   'font-lock-face face))
+                (setq pos next)))))
+      (markdown-overlays--put-text-props body-start body-end
+                                         'font-lock-face
+                                         'font-lock-doc-markup-face))))
 
 (defun markdown-overlays--fontify-divider (start end)
   "Display text between START and END as a divider."
@@ -520,37 +517,29 @@ Return non-nil if handled, nil otherwise."
 (defun markdown-overlays--fontify-link (start end title-start title-end url-start url-end)
   "Fontify a markdown link.
 Use START END TITLE-START TITLE-END URL-START URL-END."
-  ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay start title-start)
-   'evaporate t
-   'invisible 't)
+  ;; Hide markup before and after
+  (markdown-overlays--put-text-props start title-start 'invisible t)
+  (markdown-overlays--put-text-props title-end end 'invisible t)
   ;; Show title as link
-  (markdown-overlays--put
-   (make-overlay title-start title-end)
-   'evaporate t
-   'face 'link)
-  ;; Make RET open the URL
-  (define-key (let ((map (make-sparse-keymap)))
-                (define-key map [mouse-1]
-                            (lambda () (interactive)
-                              (markdown-overlays--open-link
-                               (buffer-substring-no-properties url-start url-end))))
-                (define-key map (kbd "RET")
-                            (lambda () (interactive)
-                              (markdown-overlays--open-link
-                               (buffer-substring-no-properties url-start url-end))))
-                (markdown-overlays--put
-                 (make-overlay title-start title-end)
-                 'evaporate t
-                 'keymap map)
-                map)
-              [remap self-insert-command] 'ignore)
-  ;; Hide markup after
-  (markdown-overlays--put
-   (make-overlay title-end end)
-   'evaporate t
-   'invisible 't))
+  (markdown-overlays--put-text-props title-start title-end 'font-lock-face 'link)
+  ;; Make RET/mouse open the URL; add pointer and tooltip (keymap must stay as overlay)
+  (let ((url (buffer-substring-no-properties url-start url-end)))
+    (define-key (let ((map (make-sparse-keymap)))
+                  (define-key map [mouse-1]
+                              (lambda () (interactive)
+                                (markdown-overlays--open-link url)))
+                  (define-key map (kbd "RET")
+                              (lambda () (interactive)
+                                (markdown-overlays--open-link url)))
+                  (markdown-overlays--put
+                   (make-overlay title-start title-end)
+                   'evaporate t
+                   'keymap map
+                   'pointer 'hand
+                   'help-echo url
+                   'mouse-face 'highlight)
+                  map)
+                [remap self-insert-command] 'ignore)))
 
 (defun markdown-overlays--markdown-bolds (&optional avoid-ranges)
   "Extract markdown bolds with AVOID-RANGES."
@@ -625,15 +614,11 @@ Use START END TITLE-START TITLE-END URL-START URL-END."
 Use START END LEVEL-START LEVEL-END TITLE-START TITLE-END and
 NEEDS-TRAILING-NEWLINE."
   ;; Hide markup before
-  (markdown-overlays--put
-   (make-overlay level-start title-start)
-   'evaporate t
-   'invisible 't)
+  (markdown-overlays--put-text-props level-start title-start 'invisible t)
   ;; Show title as header
-  (markdown-overlays--put
-   (make-overlay title-start title-end)
-   'evaporate t
-   'face
+  (markdown-overlays--put-text-props
+   title-start title-end
+   'font-lock-face
    (cond ((eq (- level-end level-start) 1)
           'org-level-1)
          ((eq (- level-end level-start) 2)
@@ -652,6 +637,7 @@ NEEDS-TRAILING-NEWLINE."
           'org-level-8)
          (t
           'org-level-1)))
+  ;; before-string must stay as overlay
   (when (and needs-trailing-newline (< end (point-max)))
     (markdown-overlays--put
      (make-overlay (1+ end) (1+ end))
@@ -841,7 +827,6 @@ Return alist with :file and :line if URL points to an existing file.
 For example:
 
   \"foo.el#L10\"              => ((:file . \"/abs/foo.el\") (:line . 10))
-  \"foo.el\"                  => ((:file . \"/abs/foo.el\") (:line . nil))
   \"file:src/bar.el:5\"       => ((:file . \"/abs/src/bar.el\") (:line . 5))
   \"file:///tmp/baz.el#L20\"  => ((:file . \"/tmp/baz.el\") (:line . 20))
   \"file:///tmp/baz.el\"      => ((:file . \"/tmp/baz.el\") (:line . nil))
@@ -871,8 +856,7 @@ For example:
                ;; path#L123 (GitHub-style line)
                ((string-match
                  (rx bos
-                     (group (? (optional "/") alpha ":/") ;; Windows drive letter
-                            (one-or-more (not (any ":#"))))
+                     (group (one-or-more (not (any ":#"))))
                      "#L" (group (one-or-more digit))
                      eos)
                  url)
@@ -880,15 +864,11 @@ For example:
                ;; path:123 (colon line number)
                ((string-match
                  (rx bos
-                     (group (? (optional "/") alpha ":/") ;; Windows drive letter
-                            (one-or-more (not (any ":#"))))
+                     (group (one-or-more (not (any ":#"))))
                      ":" (group (one-or-more digit))
                      eos)
                  url)
-                (cons (match-string 1 url) (match-string 2 url)))
-               ;; plain local path with no line suffix
-               ((not (string-empty-p url))
-                (cons url nil))))
+                (cons (match-string 1 url) (match-string 2 url)))))
              (filepath (expand-file-name (car match))))
     (when (file-exists-p filepath)
       (list (cons :file filepath)
@@ -1017,7 +997,6 @@ URL-START and URL-END delimit the image URL."
               ((display-graphic-p))
               (image (create-image path nil nil
                                    :max-width (markdown-overlays--image-max-width))))
-    (image-flush image)
     (markdown-overlays--put
      (make-overlay start end)
      'evaporate t
@@ -1035,7 +1014,6 @@ PATH-START and PATH-END delimit the path text."
               ((display-graphic-p))
               (image (create-image path nil nil
                                    :max-width (markdown-overlays--image-max-width))))
-    (image-flush image)
     (markdown-overlays--put
      (make-overlay start end)
      'evaporate t
