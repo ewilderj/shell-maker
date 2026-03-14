@@ -259,7 +259,8 @@ Pipes inside backtick code spans are not treated as delimiters."
 
 (defun markdown-overlays--apply-face-to-unpropertized (str face)
   "Apply FACE to characters in STR lacking a `face' property.
-Characters that already have a `face' property are left untouched."
+Characters that already have a `face' property are left untouched.
+Walks by property spans rather than individual characters."
   (let ((result (copy-sequence str))
         (len (length str))
         (pos 0))
