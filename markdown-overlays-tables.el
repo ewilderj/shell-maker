@@ -451,25 +451,60 @@ and any other characters that render taller than the default."
 
 ;;; Column Width Computation
 
-(defvar markdown-overlays--table-char-pixel-width nil
-  "Cached pixel width of a single space character.")
+;; `string-pixel-width' is convenient but can disagree with the actual
+;; rendered glyph width by 1-3 pixels for non-ASCII characters (emoji,
+;; CJK, ZWJ sequences, regional-indicator flags).  The discrepancy
+;; depends on the destination buffer's font + fontset configuration:
+;; with some monospace fonts emoji render slightly wider than spw
+;; reports, with others slightly narrower.  Padding computed from spw
+;; therefore drifts in cell widths, breaking column alignment.
+;;
+;; We sidestep the discrepancy by measuring non-ASCII strings via
+;; `window-text-pixel-size' inside the destination buffer itself.
+;; ASCII strings continue to use the fast `string-width' path because
+;; ASCII renders at exactly 1 × space-pixel-width.
+
+(defvar-local markdown-overlays--table-char-pixel-width nil
+  "Cached real pixel width of a single space in this buffer's window.")
+
+(defun markdown-overlays--table-measure-string (str window)
+  "Return real pixel width of STR if rendered at point-max of WINDOW's buffer.
+Briefly inserts STR, measures with `window-text-pixel-size', and
+deletes.  Modification hooks and the modified flag are suppressed."
+  (with-current-buffer (window-buffer window)
+    (let ((inhibit-read-only t)
+          (inhibit-modification-hooks t)
+          (modified (buffer-modified-p))
+          real)
+      (save-excursion
+        (goto-char (point-max))
+        (let ((m (point-marker)))
+          (set-marker-insertion-type m nil)
+          (insert str)
+          (setq real (car (window-text-pixel-size window m (point))))
+          (delete-region m (point))
+          (set-marker m nil)))
+      (set-buffer-modified-p modified)
+      real)))
+
+(defun markdown-overlays--table-char-pixel-width (window)
+  "Return real pixel width of a single space in WINDOW, cached."
+  (or markdown-overlays--table-char-pixel-width
+      (setq markdown-overlays--table-char-pixel-width
+            (markdown-overlays--table-measure-string " " window))))
 
 (defun markdown-overlays--table-display-width (str)
   "Return display width of STR in character units.
-Uses pixel measurements to detect characters that render wider than
-`string-width' reports (e.g., emoji).  `string-pixel-width' respects
-display properties like (height N) set by height scaling.
-Falls back to `string-width' if `string-pixel-width' is unavailable."
-  ;; ASCII characters render at exactly 1 × space-pixel-width, so
-  ;; `string-width' matches pixel measurement.  Non-ASCII (emoji, CJK)
-  ;; can render wider, requiring expensive `string-pixel-width'.
-  (if (and (fboundp 'string-pixel-width)
+For non-ASCII strings, measures actual rendered width in the
+destination buffer to handle emoji, CJK, ZWJ sequences, and flags
+correctly across font setups.  ASCII uses `string-width' fast path."
+  (if (and (fboundp 'window-text-pixel-size)
            (not (string-match-p (rx bos (* ascii) eos) str)))
-      (let ((char-px (or markdown-overlays--table-char-pixel-width
-                         (setq markdown-overlays--table-char-pixel-width
-                               (string-pixel-width " "))))
-            (actual-px (string-pixel-width str)))
-        (ceiling (/ (float actual-px) char-px)))
+      (let* ((win (or (get-buffer-window (current-buffer))
+                      (selected-window)))
+             (char-px (markdown-overlays--table-char-pixel-width win))
+             (real-px (markdown-overlays--table-measure-string str win)))
+        (ceiling (/ (float real-px) char-px)))
     (string-width str)))
 
 (defun markdown-overlays--preprocess-table (table)
@@ -588,29 +623,23 @@ Preserves text properties across wrapped lines."
         (nreverse lines)))))
 
 (defun markdown-overlays--pad-string (str width)
-  "Pad STR with spaces to reach WIDTH.
-Uses pixel measurements when available to compensate for characters
-that render wider than `string-width' reports (e.g., emoji)."
-  ;; ASCII characters render at exactly 1 × space-pixel-width, so
-  ;; column-based padding is pixel-perfect.  Non-ASCII (emoji, CJK)
-  ;; can render wider, requiring pixel-based padding with fractional spaces.
-  (if (and (fboundp 'string-pixel-width)
+  "Pad STR with spaces to reach WIDTH columns.
+For non-ASCII content, measures actual rendered width in the
+destination buffer and pads with a single fractional-width space
+property so the cell renders to exactly WIDTH × char-pixel-width."
+  (if (and (fboundp 'window-text-pixel-size)
            (not (string-match-p (rx bos (* ascii) eos) str)))
-      (let* ((char-px (or markdown-overlays--table-char-pixel-width
-                          (setq markdown-overlays--table-char-pixel-width
-                                (string-pixel-width " "))))
+      (let* ((win (or (get-buffer-window (current-buffer))
+                      (selected-window)))
+             (char-px (markdown-overlays--table-char-pixel-width win))
              (target-px (* width char-px))
-             (actual-px (string-pixel-width str))
-             (pad-px (- target-px actual-px)))
+             (content-px (markdown-overlays--table-measure-string str win))
+             (pad-px (- target-px content-px)))
         (if (<= pad-px 0)
             str
-          (let* ((full-spaces (floor (/ (float pad-px) char-px)))
-                 (remaining (/ (- (float pad-px) (* full-spaces char-px)) char-px)))
-            (concat str
-                    (make-string full-spaces ?\s)
-                    (if (> remaining 0.01)
-                        (propertize " " 'display `(space :width ,remaining))
-                      "")))))
+          (concat str
+                  (propertize " " 'display
+                              `(space :width (,pad-px))))))
     ;; ASCII-only or older Emacs — string-width is accurate.
     (let ((current-width (string-width str)))
       (if (>= current-width width)
