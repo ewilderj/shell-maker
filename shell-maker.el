@@ -1516,6 +1516,7 @@ For example, with prompt at positions 100-113:
                       (with-temp-buffer
                         (insert-file-contents path)
                         (shell-maker--extract-history
+                         (shell-maker-prompt-regexp config)
                          ;; prompts from plain text.
                          :propertized nil))))
          (execute-command (shell-maker-config-execute-command
